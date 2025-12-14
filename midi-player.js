@@ -219,7 +219,7 @@ export class MidiPlayer {
 
             if (!note.hidden && !note.played && this.currentTime >= note.time - 0.05) {
                 if (this.currentTime < note.time + note.duration) {
-                    this.piano.playNote(note.name);
+                    this.piano.playNote(note.name, note.duration);
                     note.played = true;
                     this.activeNotesByFallingNote.set(note.id, note.name);
                 } else {

@@ -9,6 +9,7 @@ export class Piano {
         this.synth = new Tone.PolySynth(Tone.Synth).toDestination();
         this.activeKeys = new Map(); // Map stores active note counts for polyphony handling
         this.keyElements = new Map(); // Cache for DOM elements to improve performance and handle aliases
+        this.keyElementCounts = new Map(); // Tracks active triggers per physical DOM element
         this.isRightShiftDown = false;
         this.onPianoRendered = null; // Callback for when piano is rendered
 
@@ -40,7 +41,7 @@ export class Piano {
         }
     }
     
-    playNote(note) {
+    playNote(note, duration = null) {
         // Track number of active triggers for this note (overlapping MIDI notes)
         const count = this.activeKeys.get(note) || 0;
         this.activeKeys.set(note, count + 1);
@@ -49,12 +50,19 @@ export class Piano {
             Tone.context.resume();
         }
         
-        // Re-trigger synth for articulation even if holding (hammer strike)
-        // Release first to reset envelope for distinct attack
-        this.synth.triggerRelease(note);
-        this.synth.triggerAttack(note);
+        // If duration is known (MIDI playback), use triggerAttackRelease for precise audio timing
+        // unaffected by JS main thread lag.
+        if (duration) {
+            this.synth.triggerAttackRelease(note, duration);
+        } else {
+            // Manual play or unknown duration: trigger attack and rely on explicit stopNote later
+            // Re-trigger synth for articulation even if holding
+            this.synth.triggerRelease(note);
+            this.synth.triggerAttack(note);
+        }
         
         // Visuals only need to be enabled if they weren't already
+        // We always call highlightKey to update physical key counts
         if (count === 0) {
             this.highlightKey(note, true);
         }
@@ -85,22 +93,33 @@ export class Piano {
     
     highlightKey(note, active) {
         const keyElement = this.getKeyElement(note);
-        if (keyElement) {
-            if (active) {
+        if (!keyElement) return;
+
+        // Track active logical notes per physical element to handle enharmonics/overlaps
+        let physCount = this.keyElementCounts.get(keyElement) || 0;
+        if (active) {
+            physCount++;
+        } else {
+            physCount = Math.max(0, physCount - 1);
+        }
+        this.keyElementCounts.set(keyElement, physCount);
+
+        if (physCount > 0) {
+            if (!keyElement.classList.contains('active')) {
                 keyElement.classList.add('active');
-            } else {
-                // Clear any existing fill animation styles before removing 'active'
-                // We disable transition momentarily to ensure the removal is instant and doesn't fade out weirdly
-                keyElement.style.transition = 'none';
-                keyElement.style.backgroundImage = ''; 
-                keyElement.style.backgroundSize = ''; 
-                keyElement.classList.remove('active');
-                
-                void keyElement.offsetWidth; // Force reflow to commit the clearing
-                
-                // Revert to stylesheet transition (all 0.1s ease) for mouse interactions
-                keyElement.style.transition = ''; 
             }
+        } else {
+            // Clear any existing fill animation styles before removing 'active'
+            // We disable transition momentarily to ensure the removal is instant and doesn't fade out weirdly
+            keyElement.style.transition = 'none';
+            keyElement.style.backgroundImage = ''; 
+            keyElement.style.backgroundSize = ''; 
+            keyElement.classList.remove('active');
+            
+            void keyElement.offsetWidth; // Force reflow to commit the clearing
+            
+            // Revert to stylesheet transition (all 0.1s ease) for mouse interactions
+            keyElement.style.transition = ''; 
         }
     }
     
@@ -111,6 +130,7 @@ export class Piano {
 
     clearKeys() {
         this.keyElements.clear();
+        this.keyElementCounts.clear();
     }
 
     registerKey(note, element) {
